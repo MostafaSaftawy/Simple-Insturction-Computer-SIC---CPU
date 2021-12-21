@@ -1,0 +1,361 @@
+module SIC_CPU(clk,reset,ACC);
+input wire clk,reset;
+output reg [15:0]ACC ;
+
+//Common Bus for all registers
+wire [15:0]Common_Bus;
+
+// Sequencer to generate timing signals
+wire [2:0]Count_Out;
+wire [7:0]T;
+counter seqCounter(.DataOut(Count_Out), .clr(reset), .clk(clk));
+decoder3x8 seqDecoder(.DataIN(Count_Out), .DataOut(T));
+wire [7:0] D ; 
+decoder3x8 IR_Dec (.DataIN(IR_Out[14:12]), .DataOut(D));
+// assign the input/output/inc/clr to each register from sub modules
+
+//PC
+wire [11:0] PC_Out;
+wire PC_LD, PC_INC,PC_CLR,PC_EN;
+//wire [11:0] bOut;
+Register_12bits PC(.DataIN(Common_Bus[11:0]), .DataOut(PC_Out), .ld(PC_LD), .inr(PC_INC), .clr(PC_CLR), .clk(clk));
+Tri_State_Buffer12x12 PC_Tsb(.DataIN(PC_Out),.DataOut(Common_Bus[11:0]),.Enable(PC_EN));
+//IR
+wire [15:0] IR_Out;
+wire IR_LD,IR_CLR,IR_EN;
+Register_16bits IR(.DataIN(Common_Bus), .DataOut(IR_Out), .ld(IR_LD), .inr(0), .clr(IR_CLR), .clk(clk));
+Tri_State_Buffer16x16 IRTsb(.DataIN(IR_Out),.DataOut(Common_Bus),.Enable(IR_EN));
+//AR
+wire [11:0] AR_Out;
+wire AR_LD, AR_INC,AR_CLR,AR_EN;
+Register_12bits AR(.DataIN(Common_Bus[11:0]), .DataOut(AR_Out), .ld(AR_LD), .inr(AR_INC), .clr(AR_CLR), .clk(clk));
+Tri_State_Buffer12x12 AR_Tsb(.DataIN(AR_Out),.DataOut(Common_Bus[11:0]),.Enable(AR_EN));
+//DR
+wire [15:0] DR_Out;
+wire DR_LD, DR_INC,DR_CLR,DR_EN;
+Register_16bits DR(.DataIN(Common_Bus), .DataOut(DR_Out), .ld(DR_LD), .inr(DR_INC), .clr(DR_CLR), .clk(clk));
+Tri_State_Buffer16x16 DR_Tsb(.DataIN(DR_Out),.DataOut(Common_Bus),.Enable(DR_EN));
+//AC
+always @ (AC_Out)
+begin
+	ACC = AC_Out;
+end
+wire [15:0] AC_Out;
+wire AC_LD, AC_INC,AC_CLR,AC_EN;
+Register_16bits AC(.DataIN(Common_Bus), .DataOut(AC_Out), .ld(AC_LD), .inr(AC_INC), .clr(AC_CLR), .clk(clk));
+Tri_State_Buffer16x16 AC_Tsb(.DataIN(AC_Out),.DataOut(Common_Bus),.Enable(AC_EN));
+//E
+wire E_In,E_Out,E_LD,E_CLR;
+dff E(.DataIN(E_In),.DataOut(E_Out),.ld(E_LD),.clr(E_CLR),.clk(clk));
+//Memory
+wire Read,Write,Ram_EN;
+wire [15:0]Ram_Out;
+Memory RAM(.Read(Read),.Write(0),.AddressLine(AR_Out),.DataIN(Common_Bus),.DataOut(Ram_Out));
+Tri_State_Buffer16x16 Ram_Tsb(.DataIN(Ram_Out),.DataOut(Common_Bus),.Enable(Ram_EN));
+//ALU
+wire ADD,AND,CIR,CIL,CMA,CME,ALU_EN;
+wire [15:0]aluOut; 
+ALU alu1(.DataIn1(AC_Out),.DataIn2(DR_Out),.E_bit_In(E_Out),.ADD_op(ADD),.AND_op(AND),.CIR(CIR),.CIL(CIL),.CMA(CMA),.CME(CME),.DataOut(aluOut),.E_bit_Out(E_In));
+Tri_State_Buffer16x16 ALU_Tsb(.DataIN(aluOut),.DataOut(Common_Bus),.Enable(ALU_EN));
+
+// assign the timing signals to each parameter of the register according to the design
+wire r;
+assign r = D[7]&~IR_Out[15]&T[3];
+//AC
+assign PC_LD =(T[4] & D[4]) | (T[5] & D[5]);
+assign PC_INC = (T[1])|(D[6]&T[6]&~DR_Out)|(r&IR_Out[4]&~AC_Out[15])|(r&IR_Out[3]&AC_Out[15])|(r&IR_Out[2]&~AC_Out)|(r&IR_Out[1]&~E_Out);
+assign PC_CLR = reset;
+assign PC_EN = (T[0])|(D[5]&T[4]);
+//IR
+assign IR_LD = (T[1]) ;
+assign IR_CLR =(reset);
+assign IR_EN =(T[2]);
+//AR
+assign AR_LD = (T[0]) | (T[2]) |(~D[7]&IR_Out[15]&T[3]);
+assign AR_INC = (D[5]&T[4]);
+assign AR_EN = (D[4]&T[4])|(D[5]&T[5]);
+assign AR_CLR = reset;
+//DR
+assign DR_LD = (D[0]&T[4])|(D[1]&T[4])|(D[2]&T[4])|(D[6]&T[4]) ;
+assign DR_INC = (D[6]&T[5]);
+assign DR_CLR = reset;
+assign DR_EN =(D[6]&T[6])|(D[2]&T[5]); 
+
+//AC
+assign AC_LD = (D[0]&T[5])|(D[1]&T[5])|(D[2]&T[5])|(r&IR_Out[9])|(r&IR_Out[7])|(r&IR_Out[6]) ;
+assign AC_INC = (r&IR_Out[5]);
+assign AC_CLR = (r&IR_Out[11])|(reset);
+assign AC_EN =(D[3]&T[4]);
+
+//E
+assign E_LD = (D[1]&T[5])|(r&IR_Out[8])|(r&IR_Out[7])|(r&IR_Out[6]) ;
+assign E_CLR =(r&IR_Out[10])|(reset);
+
+//Memory
+assign Read = (T[1])|(~D[7]&IR_Out[15]&T[3])|(D[0]&T[4])|(D[1]&T[4])|(D[2]&T[4])|(D[6]&T[4]);
+assign Ram_EN = (T[1])|(~D[7]&IR_Out[15]&T[3])|(D[0]&T[4])|(D[1]&T[4])|(D[2]&T[4])|(D[6]&T[4]);
+assign Write = (D[3]&T[4])|(D[5]&T[4])|(D[6]&T[6]);
+// ALU
+assign ALU_EN =(D[0]&T[5])|(D[1]&T[5])|(r&IR_Out[9])|(r&IR_Out[7])|(r&IR_Out[6]);
+assign ADD = (D[1]&T[5]);
+assign AND = (D[0]&T[5]);
+assign CIL = (r&IR_Out[6]);
+assign CIR = (r&IR_Out[7]);
+assign CME = (r&IR_Out[8]);
+assign CMA = (r&IR_Out[9]);
+
+endmodule
+//test bench
+module CPU_TB();
+output reg clk,reset;
+input wire [15:0]ACC ;
+initial begin
+	$dumpfile("SIC_CPU.vcd");
+	$dumpvars ;
+		clk = 0 ; 
+	#10
+	reset = 1 ;
+
+	#10
+	reset =0;
+	#1000
+	$finish; 
+end
+
+always 
+begin
+ #5 clk = ~clk ;
+end
+SIC_CPU  CPU(clk,reset,ACC);
+
+
+endmodule
+
+// Sub Modules
+module Register_16bits(DataIN, DataOut, ld, inr, clr, clk);
+
+	input [15:0] DataIN;
+	input ld, inr, clr, clk;
+	output [15:0] DataOut;
+	
+	wire [15:0] DataIN;
+	wire ld, inr, clr, clk;
+	reg [15:0] DataOut;
+
+	always @( clk)
+	begin
+		if(clr == 1'b1)
+		begin
+			DataOut <=   16'b0000000000000000;
+		end
+		
+		else if(inr == 1'b1)
+		begin
+			DataOut <= DataOut +1;
+		end
+		
+		else if (ld == 1'b1)
+		begin
+			DataOut <= DataIN;
+		end
+	end
+endmodule
+
+
+module Register_12bits(DataIN, DataOut, ld, inr, clr, clk);
+
+	input [11:0] DataIN;
+	input ld, inr, clr, clk;
+	output [11:0] DataOut;
+	
+	wire [11:0] DataIN;
+	wire ld, inr, clr, clk;
+	reg [11:0] DataOut;
+
+	always @(clk)
+	begin
+		if(clr == 1'b1)
+		begin
+			DataOut <=   12'b000000000000;
+		end
+		
+		else if(inr == 1'b1)
+		begin
+			DataOut <= DataOut +1;
+		end
+		
+		else if (ld == 1'b1)
+		begin
+			DataOut <= DataIN;
+		end
+	end
+endmodule
+// up-counter
+module counter(DataOut, clr, clk);
+
+	input clr, clk;
+	output [2:0]DataOut;
+
+	wire clr, clk;
+	reg [2:0]DataOut;
+
+	always @(  clk)
+	begin
+		if(clr == 1'b1)
+		begin
+			DataOut <= 3'b000;
+		end
+		else
+		begin
+			DataOut <= DataOut + 1;
+		end
+	end
+endmodule
+// Decoder Module to decode the instructions
+module decoder3x8(DataIN, DataOut);
+
+	input [2:0] DataIN;
+	output [7:0] DataOut;
+	wire [2:0] DataIN;
+	reg [7:0] DataOut;
+	always @(DataIN)
+	begin
+		DataOut <=   (1<<DataIN);
+	end
+endmodule
+
+// ALU module for arithmatic and logic operations
+// E refer to extension bit
+module ALU(DataIn1,DataIn2,ADD_op,AND_op,CIR,CIL,CMA,CME,DataOut,E_bit_In,E_bit_Out); 
+
+input [15:0] DataIn1;
+input [15:0] DataIn2;
+input E_bit_In,ADD_op,AND_op,CIR,CIL,CMA,CME;
+
+output [15:0] DataOut;
+output E_bit_Out;
+
+wire [15:0] DataIn1;
+wire [15:0] DataIn2;
+wire E_bit_In,ADD_op,AND_op,CIR,CIL,CMA,CME;
+
+reg [15:0] DataOut;
+reg E_bit_Out;
+
+
+	always @(ADD_op)
+	begin
+		 {E_bit_Out, DataOut} = DataIn1 + DataIn2;
+	end
+	
+	always @(AND_op)
+	begin
+		DataOut <= DataIn1 & DataIn2;
+	end
+
+	always @ (CIR)
+	begin
+		DataOut<=(DataIn1>>1);
+	end
+	always @ (CIR)
+	begin
+		E_bit_Out<=DataIn1[0];
+	end
+	always @ (CIR)
+	begin
+		DataOut[15]<=E_bit_In;
+	end
+	
+	always @ (CIL)
+	begin
+		DataOut<=(DataIn1<<1);
+	end
+	always @ (CIL)
+	begin
+		E_bit_Out<=DataIn1[15];
+	end
+	always @ (CIL)
+	begin
+		DataOut[0]<=E_bit_In;
+	end
+
+	always @ (CMA)
+	begin
+		DataOut<= ~DataIn1;
+	end
+
+	always @ (CME)
+	begin
+		E_bit_Out<= ~E_bit_In;
+	end
+endmodule
+// 4KB Memory unit
+module Memory(Read,Write,AddressLine,DataIN,DataOut);
+input Read;
+
+input Write;
+input [11:0] AddressLine;
+input [15:0] DataIN;
+output [15:0] DataOut;
+wire Read,Write;
+wire [11:0] AddressLine;
+wire [15:0] DataIN;
+reg [15:0] DataOut;
+reg [15:0] My_Meomry [4095:0];
+initial begin
+	
+	My_Meomry['h000] = 'h7800 ; 
+	My_Meomry['h001] = 'h7400 ; 
+	My_Meomry['h002] = 'h2141 ;
+	My_Meomry['h003] = 'h1142 ; 	
+	My_Meomry['h004] = 'h7200 ; 
+	My_Meomry['h005] = 'h7080 ; 
+	My_Meomry['h141] = 18 ; 
+	My_Meomry['h142] = 665 ;
+end
+
+
+always @ (Write or Read  or AddressLine or DataIN)
+begin
+	if( Read ==1'b1 && Write == 1'b0)
+	begin
+		DataOut<=My_Meomry[AddressLine];
+	end
+	else if ( Read ==1'b0 && Write == 1'b1)
+	begin
+		My_Meomry[AddressLine]=DataIN;
+	
+	end
+end
+endmodule
+
+// 16 bits tru-state buffer
+module Tri_State_Buffer16x16(input wire [15:0] DataIN,output wire [15:0] DataOut,input wire Enable);
+	assign DataOut =  (Enable == 1) ?  DataIN : 16'bz;
+endmodule
+//12 bits tri-state buffer
+module Tri_State_Buffer12x12(input wire [11:0] DataIN,output wire [11:0] DataOut,input wire Enable);
+	assign DataOut =  (Enable == 1) ?  DataIN : 12'bz;
+endmodule
+
+module dff(DataIN,DataOut,ld, clr,clk);
+
+	input DataIN, ld, clr, clk;
+	output DataOut;
+
+	wire DataIN, ld, clr, clk;
+	reg DataOut;
+
+	always @(  clk)
+	begin
+	if(clr == 1'b1)
+		begin
+			DataOut <= 1'b0;
+		end
+		
+		else if(ld == 1'b1)
+		begin
+			DataOut <= DataIN;
+		end
+	end
+endmodule
